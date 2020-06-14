@@ -129,7 +129,9 @@ const router = [
     }
 ]
 ```
-实现get路由请求，主要就是往router中添加相应的路由信息。
+
+实现 get 路由请求，主要就是往 router 中添加相应的路由信息。
+
 ```
  get: function (path, handler) {
     router.push({
@@ -139,7 +141,9 @@ const router = [
     });
 }
 ```
-在listen函数中，等待真正的请求到来的时候，根据不同的path和method去router系统中依次匹配，如果匹配成功就处理对应的handler函数，如果都没匹配到，就处理404路由。
+
+在 listen 函数中，等待真正的请求到来的时候，根据不同的 path 和 method 去 router 系统中依次匹配，如果匹配成功就处理对应的 handler 函数，如果都没匹配到，就处理 404 路由。
+
 ```
 listen: function () {
     let server = http.createServer(function (req, res) {
@@ -156,4 +160,8 @@ listen: function () {
     server.listen(...arguments);
 }
 ```
-到此，基础的get和listen功能就已经完成了，我们可以运行测试用例查看效果。具体结构代码可见分支：[step2](https://github.com/JeasonSun/mini-express/tree/step2)
+
+到此，基础的 get 和 listen 功能就已经完成了，我们可以运行测试用例查看效果。具体结构代码可见分支：[step2](https://github.com/JeasonSun/mini-express/tree/step2)
+
+**优化：** 逻辑拆分，实现创建应用和应用逻辑的分离。
+我们创建 application.js 文件，并且把 createAppliction 函数中的主要逻辑代码放在 Application 类中，express 只是用来创建一个应用实例。注意在修改Appliction的时候this指向问题，为了方便，这里使用箭头函数。具体结构代码可见分支：[step2-1](https://github.com/JeasonSun/mini-express/tree/step2-1)
