@@ -236,3 +236,169 @@ DELETE   member/1
 ```
 
 如果将路径一样的路由整合成一组，显然效率会提高很多，于是引入了 Layer 的概念。
+
+Layer 是 express Router 的核心部分，整个设计非常巧妙。首先对 Router、Layer、Route 三个类有一个初步的了解。我们先看一下 express 的 Demo 用例。
+
+```
+app.get('/home', function(req, res,next){
+    console.log('home1');
+    next();
+});
+app.get('/home', function(req, res, next){
+    console.log('home2');
+    res.end('Home');
+});
+
+app.get('/setting',function(req,res,next){
+    console.log('setting1');
+    next();
+}, function (req, res) {
+    console.log('setting2');
+    res.end('Setting');
+});
+```
+
+现在，我们记住上面的 Demo，然后依次学习 express 对于 Router、Layer、Route 的设计。
+
+Router 是 express 中的整个路由管理系统，在这个 Router 系统中的 this.stack 数组的每一项，代表一个 Layer。每个 Layer 内部含有三个变量。注意，由于引入了 Layer 概念，之前我们在 router 的 this.stack 中 push 包含`path、method、handler`的路由对象信息，需要改为 push 两个 layer 实例，每个 layer 都有`path、handle、route`三个变量。
+
+- path： 表示路由的路径。
+- handle： 代表路由的处理函数。
+- route：代表真正的路由。
+  整体结构如下图所示：
+
+```
+------------------------------------------------
+|     0     |     1     |     2     |     3     |
+------------------------------------------------
+| Layer     | Layer     | Layer     | Layer     |
+|  |- path  |  |- path  |  |- path  |  |- path  |
+|  |- handle|  |- handle|  |- handle|  |- handle|
+|  |- route |  |- route |  |- route |  |- route |
+------------------------------------------------
+                  router.stack
+```
+
+这个 Layer 中并没有包含 method 属性，因为 method 属性在 Route 类中，另外，Route 有一个依次处理 stack 中函数的方法，Route 的结构如下：
+
+```
+------------------------------------------------
+|     0         |     1         |     2         |
+------------------------------------------------
+| item          | item          | item          |
+|  |- method    |  |- method    |  |- method    |
+|  |- dispatch  |  |- dispatch  |  |- dispatch  |
+------------------------------------------------
+                  route 内部
+```
+
+这里先创建一个 Layer 类。
+
+```
+function Layer(path, handler){
+    this.path = path;
+    this.handler = handler;
+}
+```
+
+然后创建一个 Route 类。
+
+```
+function Route(){
+  this.stack = [];
+}
+Route.prototype.dispatch = function(req, res, out){
+  // 处理this.stack中的函数
+}
+Route.prototype.get = function(handlers){
+  // 把handlers存在this.stack中
+}
+```
+
+接下来我们一步步修改 Router 类。
+
+1. 修改 Router 中 get 方法
+
+```
+Router.prototype.get = function(path, handlers) {
+    let route = new Route();
+    let layer = new Layer(path, route.dispatch.bind(route));
+    layer.route = route;
+    this.stack.push(layer);
+    route.get(handlers);
+};
+```
+
+按照约定，在 get 的时候，首先应该创建一个 layer，参数分别是 path 和 handle，而这个 handle 是真正的 route，所以，我们先创建一个 Route 实例，然后把它真正处理 handlers 的方法传递给 layer，然后给 layer 添加一个`layer.route`的属性。真正的 handlers 在 route 内部，需要通过`route.get`传递进去。
+
+注意：由于允许`app.get('/path', function(){}, function(){})`，所以，get 接收的`handler`参数修改为`...handlers`。
+
+2. 修改 Route 中的 get 方法。
+   原本我们可以直接把 handlers 加入到 stack 中，然后通过 dispatch 取出来依次处理函数，但是 express 做了更深一层的处理，在 Route 类的 stack 中仍然加入的是 layer 实例，这就让 Router 的整体处理逻辑保持了一致。代码如下：
+
+```
+Route.prototype.get = function(handlers){
+    handlers.forEach(handler => {
+        let layer = new Layer('/', handler);
+        layer.method = 'get';
+        this.stack.push(layer);
+    });
+}
+```
+
+3. 首层 layer 的处理，匹配 path 路径。
+   请求过来的时候，首先进入 Router 中的 handle，handle 需要把 stack 中的 layer 依次与 path 进行匹配，如果没有匹配成功，就走下一个 layer。代码如下：
+
+```
+Router.prototype.handle = function (req, res, out) {
+    let { pathname } = url.parse(req.url);
+    let index = 0;
+    let dispatch = () => {
+        if (this.stack.length === index) {
+            return out(req, res);
+        }
+        let layer = this.stack[index++];
+        if (layer.match(pathname)) {
+            layer.handle_request(req, res, dispatch);
+        } else {
+            dispatch();
+        }
+    }
+    dispatch();
+}
+```
+
+在上述代码中，给 Layer 类新加了 match 和 handle_request 方法。分别来判断是否匹配 layer 以及处理内部 handle 函数。逻辑简单，直接上代码：
+
+```
+Layer.prototype.match = function (pathname) {
+    return this.path === pathname;
+}
+
+Layer.prototype.handle_request = function (req, res, next) {
+    this.handler(req, res, next);
+}
+```
+
+4. 在 route 中处理真正的 handlers，匹配 method 方法。
+   Route 中处理 handlers 的逻辑和外层 Router 的处理是一致的，都是对 stack 中的 layer 进行匹配，匹配到了就交给 layer 的 handle_request 来处理 layer 上的 handle。代码如下：
+
+```
+Route.prototype.dispatch = function (req, res, out) {
+    let index = 0;
+    let method = req.method.toLowerCase();
+    let dispatch = () => {
+        if (this.stack.length === index) return out(req, res);
+        let layer = this.stack[index++];
+        if (layer.method === method) {
+            layer.handle_request(req, res, dispatch);
+        } else {
+            dispatch();
+        }
+    }
+    dispatch();
+}
+```
+
+就此，我们完成了一个简单的路由系统，并在原始代码的基础上引入了 Layer 和 Route 两个概念，并修改了大量的代码。具体结构代码可见分支：[step3](https://github.com/JeasonSun/mini-express/tree/step3)
+
