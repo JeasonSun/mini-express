@@ -1,17 +1,15 @@
 const http = require('http');
 const Router = require('./router');
+const methods = require('methods');
 
 function Application() {
     this._router = new Router();
 }
-/**
- * 挂载get路由
- * @param {*} path 路由
- * @param {*} handler 处理函数
- */
-Application.prototype.get = function (path, ...handlers) {
-    this._router.get(path, handlers);
-}
+methods.forEach(method => {
+    Application.prototype[method] = function (path, ...handlers) {
+        this._router[method](path, handlers);
+    }
+});
 
 /**
  * 监听请求到来，处理路由响应

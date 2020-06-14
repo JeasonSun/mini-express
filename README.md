@@ -400,5 +400,83 @@ Route.prototype.dispatch = function (req, res, out) {
 }
 ```
 
-就此，我们完成了一个简单的路由系统，并在原始代码的基础上引入了 Layer 和 Route 两个概念，并修改了大量的代码。具体结构代码可见分支：[step3](https://github.com/JeasonSun/mini-express/tree/step3)
+就此，我们完成了一个简单的路由系统，并在原始代码的基础上引入了 Layer 和 Route 两个概念，并修改了大量的代码。
 
+具体结构代码可见分支：[step3](https://github.com/JeasonSun/mini-express/tree/step3)
+
+5. 实现其他 method 处理
+   因为其他的请求方式的处理逻辑和 GET 大同小异，所以，我们只需要每个 method 稍作修改即可。在 express 内部引用了 methods 包返回所有的请求方法。修改代码如下：
+
+`lib/application.js`
+
+```
+methods.forEach(method => {
+    Application.prototype[method] = function (path, ...handlers) {
+        this._router[method](path, handlers);
+    }
+})
+```
+
+`lib/router/index.js`
+
+```
+methods.forEach(method => {
+    Router.prototype[method] = function (path, handlers) {
+        //创建router和layer
+        // let route = this.route();
+        let route = new Route();
+        let layer = new Layer(path, route.dispatch.bind(route));
+        layer.route = route;
+        this.stack.push(layer);
+        route[method](handlers);
+    }
+})
+```
+
+`lib/router/route.js`
+
+```
+methods.forEach(method => {
+    Route.prototype[method] = function (handlers) {
+        handlers.forEach(handler => {
+            let layer = new Layer('/', handler);
+            layer.method = method;
+            this.stack.push(layer);
+        });
+    }
+})
+```
+
+具体结构代码可见分支：[step3-1](https://github.com/JeasonSun/mini-express/tree/step3-1)
+
+总结一下当前 express 各个部分的工作。
+
+application 代表一个应用程序，express 是一个工厂类，负责创建 application 对象。Router 代表路由组件，负责应用程序的整个路由系统。组件内部由一个 Layer 数组构成，每个 layer 代表一组路径相同的路由信息，具体信息存储在 Route 内部，每个 Route 内部也是一个 Layer 对象，但是 Route 内部的 Layer 和 Router 内部的 Layer 存在一定的差异性。
+
+- Router 内部的 Layer，主要包含 path、route 属性。
+- Route 内部的 Layer，主要包含 method、handle 属性。
+
+如果一个请求来临，会现从头至尾的扫描 router 内部的每一层，而处理每层的时候会先对比 URI，相同则扫描 route 的每一项，匹配成功则返回具体的信息，没有任何匹配则返回未找到。
+
+最后，整个路由系统的结构如下：
+
+```
+ --------------
+| Application  |                                 ---------------------------------------------------------
+|     |        |        ----- -----------        |     0     |     1     |     2     |     3     |  ...  |
+|     |-router | ----> |     | Layer     |       ---------------------------------------------------------
+ --------------        |  0  |   |-path  |       | Layer     | Layer     | Layer     | Layer     |       |
+  application          |     |   |-route | ----> |  |- method|  |- method|  |- method|  |- method|  ...  |
+                       |-----|-----------|       |  |- handle|  |- handle|  |- handle|  |- handle|       |
+                       |     | Layer     |       ---------------------------------------------------------
+                       |  1  |   |-path  |                                  route
+                       |     |   |-route |
+                       |-----|-----------|
+                       |     | Layer     |
+                       |  2  |   |-path  |
+                       |     |   |-route |
+                       |-----|-----------|
+                       | ... |   ...     |
+                        ----- -----------
+                             router
+```
