@@ -13,6 +13,7 @@
   "author": "mojie",
   "license": "ISC",
   "devDependencies": {
-    "express": "^4.17.1"
+    "express": "^4.17.1",
+    "methods": "^1.1.2"
   }
 }
