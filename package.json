@@ -1,0 +1,15 @@
+{
+  "name": "mini-express",
+  "version": "1.0.0",
+  "description": "从零开始实现一个简易Express框架",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "express",
+    "node.js"
+  ],
+  "author": "mojie",
+  "license": "ISC"
+}
