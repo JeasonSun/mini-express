@@ -11,5 +11,8 @@
     "node.js"
   ],
   "author": "mojie",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "express": "^4.17.1"
+  }
 }
