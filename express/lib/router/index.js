@@ -34,7 +34,7 @@ Router.prototype.handle = function (req, res, out) {
             return out(req, res);
         }
         let layer = this.stack[index++];
-        if (layer.match(pathname)) {
+        if (layer.match(pathname) && layer.route.methods[req.method.toLowerCase()]) {
             layer.handle_request(req, res, dispatch);
         } else {
             dispatch();

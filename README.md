@@ -447,9 +447,110 @@ methods.forEach(method => {
 })
 ```
 
-具体结构代码可见分支：[step3-1](https://github.com/JeasonSun/mini-express/tree/step3-1)
+6. 优化匹配速度
 
-总结一下当前 express 各个部分的工作。
+我们先来看一个 Demo
+`test/3.3.[mini-express]optimize-match.js`
+
+```
+app.post('/home', function(req, res, next){
+    console.log('post home 1');
+    next();
+});
+app.post('/home', function(req, res, next){
+    console.log('post home 2');
+    res.end('Post home res');
+});
+app.get('/home', function(req, res, next){
+    console.log('get home 1');
+    next();
+});
+app.get('/home', function(req, res, next){
+    console.log('get home 2');
+    res.end('Get home res');
+});
+```
+
+接着在`lib/router/route.js`中的 dispatch 中添加一个输出`console.log('inner')`，然后运行测试代码，查看输出。
+
+```
+inner
+inner
+inner
+get home 1
+inner
+get home 2
+```
+
+通过观察可以看到，虽然访问的是`GET /home`，但是由于 Router 在匹配 Layer 层的时候只匹配了路径`/home`，写在前面的`POST /home`每次都会被匹配到，并且进入 Route 执行 dispatch。明显这部分可以优化：在匹配第一层 Layer 时判断该 Layer 中的 route 是否包含此种请求方法，如果不包含，可以直接跳过此 Layer。具体修改如下：
+
+- `lib/route.js`
+
+```diff
+function Route() {
+    this.stack = [];
++   this.methods = {}; // 表示当前route中有哪些方法。
+}
+
+methods.forEach(method => {
+    Route.prototype[method] = function (handlers) {
+        handlers.forEach(handler => {
+            let layer = new Layer('/', handler);
+            layer.method = method;
++           this.methods[method] = true; //记录用户绑定的方法。
+            this.stack.push(layer);
+        });
+    }
+})
+```
+
+`lib/router/index.js`
+
+```diff
+- if (layer.match(pathname)) {
++ if (layer.match(pathname) && layer.route.methods[req.method.toLowerCase()]) {
+    layer.handle_request(req, res, dispatch);
+} else {
+    dispatch();
+}
+```
+
+7. 优化 lazyrouter
+
+在 Express 源码中有处理 lazyrouter，作用是不在引入`express()`后立即创建一个`router`实例，而是在需要的时候才创建。代码如下：
+
+`lib/application.js`
+
+```diff
+function Application() {
+-    this._router = new Router();
+}
++ Application.prototype.lazyrouter = function () {
++    if (!this._router) {
++        this._router = new Router();
++    }
++ }
+
+methods.forEach(method => {
+    Application.prototype[method] = function (path, ...handlers) {
++       this.lazyrouter();
+        this._router[method](path, handlers);
+    }
+});
+
+Application.prototype.listen = function () {
+    let server = http.createServer((req, res) => {
+       ...
++       this.lazyrouter();
+        this._router.handle(req, res, done);
+    });
+      ...
+}
+```
+
+到此，本节需求已经基本完成，具体结构代码可见分支：[step3-1](https://github.com/JeasonSun/mini-express/tree/step3-1)
+
+最后，总结一下当前 express 各个部分的工作。
 
 application 代表一个应用程序，express 是一个工厂类，负责创建 application 对象。Router 代表路由组件，负责应用程序的整个路由系统。组件内部由一个 Layer 数组构成，每个 layer 代表一组路径相同的路由信息，具体信息存储在 Route 内部，每个 Route 内部也是一个 Layer 对象，但是 Route 内部的 Layer 和 Router 内部的 Layer 存在一定的差异性。
 
@@ -459,24 +560,3 @@ application 代表一个应用程序，express 是一个工厂类，负责创建
 如果一个请求来临，会现从头至尾的扫描 router 内部的每一层，而处理每层的时候会先对比 URI，相同则扫描 route 的每一项，匹配成功则返回具体的信息，没有任何匹配则返回未找到。
 
 最后，整个路由系统的结构如下：
-
-```
- --------------
-| Application  |                                 ---------------------------------------------------------
-|     |        |        ----- -----------        |     0     |     1     |     2     |     3     |  ...  |
-|     |-router | ----> |     | Layer     |       ---------------------------------------------------------
- --------------        |  0  |   |-path  |       | Layer     | Layer     | Layer     | Layer     |       |
-  application          |     |   |-route | ----> |  |- method|  |- method|  |- method|  |- method|  ...  |
-                       |-----|-----------|       |  |- handle|  |- handle|  |- handle|  |- handle|       |
-                       |     | Layer     |       ---------------------------------------------------------
-                       |  1  |   |-path  |                                  route
-                       |     |   |-route |
-                       |-----|-----------|
-                       |     | Layer     |
-                       |  2  |   |-path  |
-                       |     |   |-route |
-                       |-----|-----------|
-                       | ... |   ...     |
-                        ----- -----------
-                             router
-```

@@ -2,11 +2,17 @@ const http = require('http');
 const Router = require('./router');
 const methods = require('methods');
 
-function Application() {
-    this._router = new Router();
+function Application() {}
+
+Application.prototype.lazyrouter = function(){
+    if (!this._router) {
+        this._router = new Router();
+    }
 }
+
 methods.forEach(method => {
     Application.prototype[method] = function (path, ...handlers) {
+        this.lazyrouter();
         this._router[method](path, handlers);
     }
 });
@@ -21,6 +27,7 @@ Application.prototype.listen = function () {
             res.setHeader('Content-Type', 'text/plain;charset=utf-8');
             res.end(`Cannot ${req.method} ${req.url}`);
         }
+        this.lazyrouter();
         this._router.handle(req, res, done);
     });
     server.listen(...arguments); // 因为listen的参数其实是不固定的，这边直接解构app.listen的arguments参数，也可以使用server.listen.apply(server, arguments)   argument主要是port,callback等。
