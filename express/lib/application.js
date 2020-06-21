@@ -2,9 +2,9 @@ const http = require('http');
 const Router = require('./router');
 const methods = require('methods');
 
-function Application() {}
+function Application() { }
 
-Application.prototype.lazyrouter = function(){
+Application.prototype.lazyrouter = function () {
     if (!this._router) {
         this._router = new Router();
     }
@@ -16,6 +16,11 @@ methods.forEach(method => {
         this._router[method](path, handlers);
     }
 });
+
+Application.prototype.use = function (path, handler) {
+    this.lazyrouter();
+    this._router.use(path, handler);
+}
 
 /**
  * 监听请求到来，处理路由响应

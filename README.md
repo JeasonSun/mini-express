@@ -554,10 +554,103 @@ Application.prototype.listen = function () {
 
 application 代表一个应用程序，express 是一个工厂类，负责创建 application 对象。Router 代表路由组件，负责应用程序的整个路由系统。组件内部由一个 Layer 数组构成，每个 layer 代表一组路径相同的路由信息，具体信息存储在 Route 内部，每个 Route 内部也是一个 Layer 对象，但是 Route 内部的 Layer 和 Router 内部的 Layer 存在一定的差异性。
 
-- Router 内部的 Layer，主要包含 path、route 属性。
+- Router 内部的 Layer，主要包含 path、route、handle 属性。
 - Route 内部的 Layer，主要包含 method、handle 属性。
 
 如果一个请求来临，会现从头至尾的扫描 router 内部的每一层，而处理每层的时候会先对比 URI，相同则扫描 route 的每一项，匹配成功则返回具体的信息，没有任何匹配则返回未找到。
 
 最后，整个路由系统的结构如下：
 ![路由系统结构图](https://static01.imgkr.com/temp/96e9b18ad63d4c518080d132fcee7e7c.jpg)
+
+### 4.版本 0.0.4 - 中间件
+
+本次迭代主要目标是实现 Express 的中间件机制。Express 中的中间件其实就是一个函数，它的内部可以访问和修改请求和响应对象，并且通过 next 函数控制是否向下继续执行。
+
+中间件的功能包括：
+
+- 执行任何代码
+- 修改请求和响应对象
+- 终结请求-响应循环
+- 调用堆栈中的下一个中间件
+
+如果当前中间件没有终结请求-响应循环，则必须调用`next()`方法，将控制权交给下一个中间件，否则请求就会被挂起。
+
+Express 应用中可以使用如下几种中间件：
+
+- 应用级中间件
+- 路由级中间件
+- 错误处理中间件
+- 内置中间件
+- 第三方中间件
+
+#### 4.1 应用级中间件
+
+应用级中间件，其使用方法是 Application 类上的两种方式：Application.METHOD (HTTP 的各种请求方法）和 Application.use，前者我们已经实现了，现在来实现 Application.use。
+
+Application.use 和 Application.METHOD 的逻辑是一致的，都是 Router 的代理。不同的是：普通路由中`layer.route`属性指向 Route 对象，`layer.handle`属性指向`Route.dispatch`函数。而在中间件中，同样是创建一个 layer 实例放入`router.stack`队列中，只是中间件的 layer 没有 route 属性，即`layer.route = undefined`，layer.handle 指向中间件处理函数。等待请求到来，`Router.handle`根据不同的`layer.route`是否有值来判断是普通的路由还是中间件，并做相应的处理。
+
+接下来，我们一步步修改代码：
+
+`lib/application.js`
+
+```
+Application.prototype.use = function (path, handler) {
+    this.lazyrouter();
+    this._router.use(path, handler);
+}
+```
+
+由于 Express 允许中间件省略 path 参数，所以需要兼容处理一下，当只传一个参数，且为`function`的时候，设置默认`path = '/'`。
+
+`lib/router/index.js`
+
+```
+Router.prototype.use = function (path, handler) {
+    if (typeof path === 'function') {
+        handler = path; // 给path默认值
+        path = '/';
+    }
+    let layer = new Layer(path, handler); // 产生一层layer
+    layer.route = undefined; // 如果route是undefined，说明他是中间件；
+    this.stack.push(layer);
+}
+```
+
+接下来重点处理`Router.prototype.handle`函数，根据 layer 是普通路由还是中间件做不同处理。先判断是否匹配到路径，如果没有匹配路径，直接执行下一个 layer，如果匹配到路径且是中间件，执行对应的方法即可。如果是普通路由且 layer.route 中有此 Method，就进入 Route，执行`Route.dispatch`任务。否则跳转下一层 layer。
+
+```diff
+- if (layer.match(pathname) && layer.route.methods[req.method.toLowerCase()]) {
++ if (layer.match(pathname)) {
++   if (!layer.route) { // 如果是中间件，直接执行对应的方法即可。
++       layer.handle_request(req, res, dispatch);
++   } else {
++       if (layer.route.methods[req.method.toLowerCase()]) {
+            layer.handle_request(req, res, dispatch);
++       } else {
++           dispatch();
++       }
++   }
+} else {
+    dispatch();
+}
+```
+
+在中间件中，匹配 path 并不是全等匹配，只要匹配起始位置即可，所以需要修改一下 Layer 中的 match 方法，代码如下：
+
+```
+Layer.prototype.match = function (pathname) {
+    if (this.path === pathname) {
+        return true;
+    }
+    // 如果是中间件，需要特殊处理
+    if (!this.route) {
+        if (this.path === '/') {
+            return true;
+        }
+        return pathname.startsWith(this.path + '/');
+    }
+    return false;
+}
+```
+
+#### 4.2 动态路由

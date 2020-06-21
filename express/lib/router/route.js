@@ -10,7 +10,6 @@ function Route() {
 Route.prototype.dispatch = function (req, res, out) {
     let index = 0;
     let method = req.method.toLowerCase();
-    console.log('inner');
     let dispatch = () => {
         if (this.stack.length === index) return out(req, res);
         let layer = this.stack[index++];
