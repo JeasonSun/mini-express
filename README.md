@@ -653,4 +653,6 @@ Layer.prototype.match = function (pathname) {
 }
 ```
 
-#### 4.2 动态路由
+
+具体结构代码可见分支：[step4](https://github.com/JeasonSun/mini-express/tree/step4)
+
