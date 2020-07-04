@@ -10,8 +10,9 @@ function Route() {
 Route.prototype.dispatch = function (req, res, out) {
     let index = 0;
     let method = req.method.toLowerCase();
-    let dispatch = () => {
-        if (this.stack.length === index) return out(req, res);
+    let dispatch = (err) => {
+        if (err) return out(err);
+        if (this.stack.length === index) return out();
         let layer = this.stack[index++];
         if (layer.method === method) {
             layer.handle_request(req, res, dispatch);

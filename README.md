@@ -653,6 +653,205 @@ Layer.prototype.match = function (pathname) {
 }
 ```
 
-
 具体结构代码可见分支：[step4](https://github.com/JeasonSun/mini-express/tree/step4)
+
+#### 4.2 错误处理中间件
+
+在 Express 中捕捉错误的方法有两种，首先我们看一下原生情况下的 demo。
+
+```
+app.use(function (req, res, next) {
+    let isError = Math.random() > 0.5;
+    if (isError) {
+        return next('中间件发生错误');
+    }
+    next();
+});
+
+app.get('/', function (req, res, next) {
+    console.log('1');
+    let isError = Math.random() > 0.5;
+    if (isError) {
+        return next('路由发生错误');
+    }
+    next();
+});
+
+app.get('/', function (req, res, next) {
+    console.log('2');
+    res.end('/');
+});
+
+app.use((err, req, res, next) => {
+    res.setHeader('Content-Type', 'text/html;charset=utf8');
+    res.end('Something Error : ' + err)
+});
+```
+
+当我们调用`next`的时候，如果传递了参数，那么我们就认为发生了错误。现在，思考一下在中间件中的 next 和路由处理函数中的 next 是否是一样的？通过前面篇章的了解到，在中间件中的 next 其实是调用了第一层`router/index.js`中的`handle.dispatch`，而在路由处理函数中的 next 是调用了第二层`route.js`中的`dispatch`方法。
+
+在普通路由处理中，如果已经发生了错误，应该直接跳出路由至第一层 layer，往下寻找错误处理中间件，所以先修改`route.js`。
+
+```diff
+Route.prototype.dispatch = function (req, res, out) {
+    ...
++    let dispatch = (err) => {
+-    let dispatch = () => {
++        if (err) return out(err);
++        if (this.stack.length === index) return out();
+-        if (this.stack.length === index) return out(req, res); //FIX:修复一个bug，out的时候不能传递参数，一旦有参数就代表已经报错了。
+        let layer = this.stack[index++];
+        ...
+    }
+    dispatch();
+}
+```
+
+在第一层 layer 循环处理中，如果发生错误，应该直接寻找错误处理中间件。当`layer.route`有值，说明是普通路由，则需要直接传递错误信息，寻找下一个。如果是中间件，可能是普通中间件和错误处理中间件，按照约定，错误处理中间件的参数是 4 个，如果是普通中间件也直接跳过并传递错误信息，直到遇到错误处理中间件执行错误处理函数。
+
+```diff
+Router.prototype.handle = function (req, res, out) {
+    ...
+    let dispatch = (err) => {
+        ...
+        let layer = this.stack[index++];
+        // 如果用户传入了错误属性，要查找错误中间件
++        if (err) {
++            if(!layer.route){// 中间件有两种可能： 错误中间件  普通中间件
++                // 中间件处理函数的参数是4个的时候是错误处理中间件
++                layer.handle_error(err, req, res, dispatch);
++            }else {
++                dispatch(err); // 是路由，直接忽略，err往下传
++            }
++        } else {
+            ...
++        }
+
+    }
+    dispatch();
+}
+```
+
+在`layer.js`中添加`handle_error`处理函数。
+
+```
+Layer.prototype.handle_error = function(err, req, res, next){
+    if(this.handler.length === 4){
+        return this.handler(err, req, res, next);
+    } else {
+        next(err);
+    }
+}
+```
+
+最后，在正常情况下，如果没有发生错误，不应该执行错误中间件，所以还需要稍微修改一下`router/index.js`中`!err`情况下中间件判断的时候，中间件参数不能为 4。
+
+```diff
+if (layer.match(pathname)) { // layer有可能是中间件，还有可能是路由。
++    if (!layer.route && layer.handler.length !== 4) {
+-    if (!layer.route) {
+        ...
+    }
+}
+```
+
+#### 4.3 动态路由
+
+大家对动态路由应该不陌生，在 React、Vue 等路由系统中也都有使用到，先来看一个 demo。
+
+```
+app.get('/info/:id/:age', function(req, res){
+    console.log(req.params);
+    res.end(JSON.stringify(req.params));
+});
+```
+
+当访问`/info/1/2`的时候，页面会显示`{ "id": "1", "age": "2" }`。如果访问`/info/1`，页面会报错。由此说明，我们定义路由时候的`id`、`age`是占位符，不能不传。那这是怎么做到的呢？基础思路如下：
+
+1. 把配置的路由转化成一个正则。
+2. 请求时把 url 与正则匹配。
+
+首先，模拟一个实际请求路径，然后用正则匹配，明确需要把路由规则转化成的正则模型。
+
+```
+let requestUrl = '/info/1/2';
+let reg = new RegExp('/info/([^/]+)/([^/]+)');
+let result = requestUrl.match(reg);
+console.log(result);
+
+/**
+ *  输出result如下：
+ * [
+ *    '/info/1/2',
+ *    '1',     // ---------- :id
+ *    '2',     // ---------- :age
+ *    index: 0,
+ *    input: '/info/1/2',
+ *    groups: undefined
+ * ]
+*/
+```
+
+所以，只要把定义的路由规则`/info/:id/:age`转化为字符串`/info/([^/]+)/([^/]+)`，通过匹配路由就能得到`id`和`age`。在路由规则转为正则字符的时候，将`:id`替换为`id`，并且将 id 保存下来，以便后续一一对应。
+
+```
+let configUrl = '/info/:id/:age';
+let keys = [];
+let configRegString = configUrl.replace(/:([^\/]+)/g, function () {
+    keys.push(arguments[1]);
+    return '([^\/]+)'
+});
+console.log(configRegString, keys);
+
+/**
+ *  输出如下：
+ *  /info/([^/]+)/([^/]+) [ 'id', 'age' ]
+*/
+```
+
+最后就是将数组`[,1,2,]`和 keys`[id,age]`对应组合成`{id:1,age:2}`。整体的核心思路就是将用户的路由配置转化成正则，和当前请求的路径匹配拿到结果。由于此路由逻辑在 React 等路由系统中也常用，所以有现成库`path-to-regexp`，express 中也使用了此库。接下来，逐步修改`mini-express/lib/router/layer.js`。
+
+```diff
+function Layer(path, handler) {
+    ...
+    // 把路径转化成正则
++    this.reg = pathToRegExp(this.path, this.keys = []);
+}
+
+Layer.prototype.match = function (pathname) {
++    let match = pathname.match(this.reg);
++    if (match) {
++        this.params = this.keys.reduce((memo, current, index) => {
++            memo[current.name] = match[index + 1];
++            return memo;
++        }, {});
++        return true;
++    }
+    ...
+}
+```
+
+在`router/index.js`中，在匹配到路由后，给`req`添加`params`属性。
+
+```diff
+Router.prototype.handle = function (req, res, out) {
+    ...
+    if (layer.match(pathname)) {
+        if (!layer.route && layer.handler.length !== 4) {
+            ...
+        } else {
+            if (layer.route.methods[req.method.toLowerCase()]) {
++                req.params = layer.params;
+                layer.handle_request(req, res, dispatch);
+            } else {
+                dispatch();
+            }
+        }
+    } else { dispatch(); }
+}
+```
+到此，本节需求已经基本完成，具体结构代码可见分支：[step4-1]
+
+
+
 
