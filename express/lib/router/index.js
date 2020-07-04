@@ -47,10 +47,14 @@ proto.route = function () {
 proto.handle = function (req, res, out) {
     let { pathname } = url.parse(req.url);
     let index = 0;
+    let removed = '';
     let dispatch = (err) => {
 
         if (this.stack.length === index) {
             return out(req, res);
+        }
+        if(removed) {
+            req.url = removed + req.url;
         }
         let layer = this.stack[index++];
         // 如果用户传入了错误属性，要查找错误中间件
@@ -70,7 +74,8 @@ proto.handle = function (req, res, out) {
                     // 在这里把中间件的路径删除掉
                     // /user/add /user
                     if (layer.path !== '/') {
-                        req.url = req.url.slice(layer.path.length);
+                        removed = layer.path;
+                        req.url = req.url.slice(removed.length);
                     }
                     layer.handle_request(req, res, dispatch);
                 } else {

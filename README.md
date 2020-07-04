@@ -850,7 +850,155 @@ Router.prototype.handle = function (req, res, out) {
     } else { dispatch(); }
 }
 ```
-到此，本节需求已经基本完成，具体结构代码可见分支：[step4-1]
+到此，本节需求已经基本完成，具体结构代码可见分支：[step4-1](https://github.com/JeasonSun/mini-express/tree/step4-1)
+
+#### 4.4 二级路由
+
+在 Express 中有路由中间件的概念，也就是通常我们所说的二级路由。在开发过程中，合理的路由分配和部署，能够让整体结构和逻辑清晰。先来看一个实际用例。创建两个路由`userRouter`和`articleRouter`，然后在`app`上应用这两个路由。
+
+```
+/********* user相关路由，可以提出放在 user-router.js *********/
+const userRouter = express.Router();
+userRouter.get('/add', function (req, res) {
+    res.end('user add');
+});
+userRouter.get('/remove', function (req, res) {
+    res.end('user remove');
+});
+
+/********* article相关路由，可以提出放在 article-router.js *********/
+const articleRouter = express.Router();
+articleRouter.get('/add', function (req, res) {
+    res.end('article add ');
+});
+articleRouter.get('/remove', function (req, res) {
+    res.end('article remove');
+});
+
+app.get('/', function(req, res){ res.end('Home'); });
+app.use('/user', userRouter);
+app.use('/article', articleRouter);
+
+app.listen(3000);
+```
+
+从上述 demo 看，子路由是由`express.Router()`创建的，所以，首先在 express 上挂载 Router 类，便于使用。`lib/exporess.js`增加代码如下：
+
+```
+const Router = require('./router');
+function createApplication() {
+    return new Application();
+}
+createApplication.Router = Router;
+```
+
+但是问题来了，目前`express.Router()`执行完毕返回的是`undefined`，按照上述 demo 的使用`app.use('/user', userRouter)`，userRouter 是一个中间件，所以应该一个函数方法`function(req,res,next){}`。所以，我们来改造一个`lib/index.js`。
+
+```
+function Router() { // express.Router返回的结果会放到app.use()上
+    this.stack = [];
+    let router = (req, res, next) => { };
+    return router;
+}
+```
+
+这样一来，`application`中的`new Router()`返回的就是一个函数，在它上面并没有`prototype`上方法，所以需要通过修改原型链来让 router 找到这些方法。我们定义一个对象`proto={}`，将所有`Router.proptotype`上的方法都放到`proto`上，然后`router.__proto__ = proto`，这样就形成了原型链，在`router`上也能访问到`use`、`handle`、`METHOD`等方法了。
+
+```
+function Router() {
+    // this.stack = [];  // this应该修改为router
+    let router = (req, res, next) => { };
+    router.__proto__ = proto;
+    router.stack = [];
+    return router;
+}
+
+let proto = {};
+
+methods.forEach(method => {
+    proto[method] = function (path, handlers) { ... }
+})
+proto.use = function (path, handler) { ... }
+proto.route = function () { ... }
+proto.handle = function (req, res, out) { ... }
+```
+
+经过上述修改，先测试一下原本的路由功能是否正常，先把子路由相关的代码注释，只剩`app.get('/', function(req, res){ res.end('Home'); });`这个路由，然后访问`/`，查看目前功能是否一切正常。接下来，继续完善子路由逻辑。
+
+分析一下`userRouter`，我们在`userRouter`这个子路由中加入了两个 layer`add`和`remove`，保存在`router.stack`中，当请求到来时候，`app.use('/user', userRouter)`匹配到中间件，走到我们刚刚写的`let router = (req, res, next) => { };`函数，在这里应该依次取出`stack`的`layer`执行，如果处理不了，调用 next，匹配下一个中间件。。
+
+```diff
+function Router() {
+    let router = (req, res, next) => {
++       router.handle(req, res, next);
+    };
+    ...
+}
+```
+
+到现在似乎已经完成了二级路由，但是现实调试有问题，并没有匹配到二级路由里的`add`和`remove`。什么原因呢，因为`app.use`匹配到`user`的后，交给`handle`处理，匹配的时候`url`是`/user/add`，但是在`stack`的`layer`中保存的`path`是`/add`。怎么解决这个问题呢？我们在匹配到`user`中间件后，先删除`/user`，剩下`/add`，这样接下来匹配`/add`的时候就能顺利匹配了，我们修改一下`router/index.js`中的代码。
+
+```diff
+ if (!layer.route && layer.handler.length !== 4) { // 如果是中间件，直接执行对应的方法即可。
+    // 正常时候，不能执行错误中间件。
+    // 在这里把中间件的路径删除掉
+    // /user/add /user
+    // /home / 如果中间件就是/不应该删除 /
+    if (layer.path !== '/') {
+        req.url = req.url.slice(layer.path.length);
+    }
+}
+```
+
+现在还遗留了一个问题，假设我们在写中间件路由的时候，写了两个 user 路由中间件，那么问题就出现了，由于匹配第一个 user 路由中间件的时候，将`/user`已经删除了，如果没有匹配到，跳转下一个 user 路由中间件的时候，也必然是匹配不到的。
+
+```
+userRouter1.get('add', function(){});
+userRouter2.get('info', function(){});
+// 访问 /user/info
+app.use('/user', userRouter1); // 这边已经删除了 /user 并且没有匹配到 /info，跳转下一个 '/user'
+app.use('/user', userRouter2); //此时的url是  /info，直接不匹配
+```
+
+所以，需要在 next 的时候把删除的`/user`重新加回来。
+
+```diff
+proto.handle = function (req, res, out) {
+    ...
++    let removed = '';
+    let dispatch = (err) => {
+        ...
++        if (removed) {
++            req.url = removed + req.url;
++        }
+        ...
+        if (!layer.route && layer.handler.length !== 4) {
+            if (layer.path !== '/') {
+-                req.url = req.url.slice(layer.path.length);
++                removed = layer.path;
++                req.url = req.url.slice(removed.length);
+            }
+            layer.handle_request(req, res, dispatch);
+        }
+
+    }
+    dispatch();
+}
+```
+
+【bug 修复】：在`app.get`中的处理函数应该是一个数组，之前的代码这个数组的解构放在了`application.js`中，由于二级路由中`Router`类可以直接调用，所以，我们把这个数组解构放到`router/index.js`中。
+
+```diff
+-Application.prototype[method] = function (path, ...handlers) {}
++Application.prototype[method] = function (path, handlers) {}
+```
+
+```diff
+-proto[method] = function (path, handlers)
++proto[method] = function (path, ...handlers)
+```
+
+至此，二级路由的功能就已经完成了，具体代码见具体结构代码可见分支：[step4-2](https://github.com/JeasonSun/mini-express/tree/step4-2)
 
 
 
