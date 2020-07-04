@@ -320,7 +320,7 @@ Route.prototype.get = function(handlers){
 1. 修改 Router 中 get 方法
 
 ```
-Router.prototype.get = function(path, handlers) {
+Router.prototype.get = function(path, ...handlers) {
     let route = new Route();
     let layer = new Layer(path, route.dispatch.bind(route));
     layer.route = route;
@@ -851,6 +851,8 @@ Router.prototype.handle = function (req, res, out) {
 }
 ```
 到此，本节需求已经基本完成，具体结构代码可见分支：[step4-1]
+
+
 
 
 

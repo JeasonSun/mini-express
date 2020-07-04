@@ -2,14 +2,20 @@ const url = require('url');
 const methods = require('methods');
 const Route = require('./route');
 const Layer = require('./layer');
-const { nextTick } = require('process');
 
-function Router() {
-    this.stack = [];
+function Router() { // express.Router返回的结果会放到app.use()上
+    let router = (req, res, next) => { // 当路由中间件匹配到后会执行此方法， 需要去当前stack中依次取出执行，如果处理不了，调用next，匹配下一个中间件。
+        router.handle(req, res, next);
+    };
+    router.__proto__ = proto;
+    router.stack = [];
+    return router;
 }
 
+let proto = {};
+
 methods.forEach(method => {
-    Router.prototype[method] = function (path, handlers) {
+    proto[method] = function (path, ...handlers) {
         //创建router和layer
         // let route = this.route();
         let route = new Route();
@@ -21,7 +27,7 @@ methods.forEach(method => {
 })
 
 // 中间件会放到当前的路由系统中
-Router.prototype.use = function (path, handler) {
+proto.use = function (path, handler) {
     if (typeof path === 'function') {
         handler = path; // 给path默认值
         path = '/';
@@ -31,14 +37,14 @@ Router.prototype.use = function (path, handler) {
     this.stack.push(layer);
 }
 
-Route.prototype.route = function () {
+proto.route = function () {
     let route = new Route();
     let layer = new Layer(path, route.dispatch.bind(route));
     layer.route = route;
     return route;
 }
 
-Router.prototype.handle = function (req, res, out) {
+proto.handle = function (req, res, out) {
     let { pathname } = url.parse(req.url);
     let index = 0;
     let dispatch = (err) => {
@@ -61,6 +67,11 @@ Router.prototype.handle = function (req, res, out) {
             if (layer.match(pathname)) { // layer有可能是中间件，还有可能是路由。
                 if (!layer.route && layer.handler.length !== 4) { // 如果是中间件，直接执行对应的方法即可。
                     // 正常时候，不能执行错误中间件。
+                    // 在这里把中间件的路径删除掉
+                    // /user/add /user
+                    if (layer.path !== '/') {
+                        req.url = req.url.slice(layer.path.length);
+                    }
                     layer.handle_request(req, res, dispatch);
                 } else {
                     if (layer.route.methods[req.method.toLowerCase()]) {
