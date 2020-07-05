@@ -1000,6 +1000,101 @@ proto.handle = function (req, res, out) {
 
 至此，二级路由的功能就已经完成了，具体代码见具体结构代码可见分支：[step4-2](https://github.com/JeasonSun/mini-express/tree/step4-2)
 
+#### 4.5 app.param
+
+在 Express 中`app.param`方法可以用于验证参数，可以理解为对参数进行过滤的一个中间件。本小节就来实现这个方法，先结合 demo 理解一下`app.param`的实际用途。
+
+```
+app.param('id', function (req, res, next, value, key) {
+    req.params.id = value + 10;
+    next();
+});
+
+app.param('age', function (req, res, next, value, key) {
+    if (value > 18) {
+        next();
+    } else {
+        res.end('No admission to 18 years of age');
+    }
+});
+
+app.get('/info/:id/:age', function (req, res, next) {
+    res.end(JSON.stringify(req.params));
+});
+
+app.get('/', function (req, res, next) {
+    res.end('OK');
+});
+```
+
+通过 demo 我们可以观察到，当配置路径中有参数`id`和`age`时，会先走预先定义的`app.param`逻辑进行参数检查更新，然后走到真正的路由方法中执行。对于`app.get('/')`没有匹配到参数的路径不受影响。要实现这个功能，很容易想到发布订阅模式。
+
+1. 订阅
+
+```
+// lib/application.js
+Application.prototype.param = function (key, handler){
+    this.lazyrouter();
+    this._router.param(key, handler);
+}
+
+// lib/router/index.js
+function Router() {
+   router.paramsCallback = {}; // {key: [fn, fn]}
+}
+
+proto.param = function (key, handler){ // 发布订阅
+    if(this.paramsCallback[key]){
+        this.paramsCallback[key].push(handler);
+    }else {
+        this.paramsCallback[key] = [handler];
+    }
+}
+```
+
+2. 发布：路由和方法匹配到后，在执行函数前将订阅好的事件执行一下。
+
+```diff
+proto.handle = function(req, res, out){
++    this.process_params(layer, req, res, () => {
+          layer.handle_request(req, res, dispatch);
++    })
+}
+```
+
+```
+proto.process_params = function (layer, req, res, done) {
+    //如果没有动态参数，直接done
+    if (!layer.keys || !layer.keys.length) {
+        return done();
+    }
+    let keys = layer.keys.map(item => item.name);
+    let params = this.paramsCallback;
+    let index = 0;
+    function next() {
+        if (index == keys.length) {
+            return done();
+        }
+        let key = keys[index++];
+        processCallback(key, next);
+    }
+    next();
+    function processCallback(key, out) {
+        let fns = params[key];
+        let idx = 0;
+        let value = req.params[key]
+        function next() {
+            if (fns.length === idx) { return out() }
+            let fn = fns[idx++];
+            fn(req, res, next, value, key);
+        }
+        next();
+    }
+}
+```
+
+至此，`app.param`的功能就已经完成了，路由系统的主要功能逻辑也完成，具体代码见具体结构代码可见分支：[step4-3](https://github.com/JeasonSun/mini-express/tree/step4-3)
+
 
 
 

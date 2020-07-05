@@ -9,6 +9,7 @@ function Router() { // express.Router返回的结果会放到app.use()上
     };
     router.__proto__ = proto;
     router.stack = [];
+    router.paramsCallback = {}; // {key: [fn, fn]}
     return router;
 }
 
@@ -53,7 +54,7 @@ proto.handle = function (req, res, out) {
         if (this.stack.length === index) {
             return out(req, res);
         }
-        if(removed) {
+        if (removed) {
             req.url = removed + req.url;
         }
         let layer = this.stack[index++];
@@ -81,7 +82,11 @@ proto.handle = function (req, res, out) {
                 } else {
                     if (layer.route.methods[req.method.toLowerCase()]) {
                         req.params = layer.params;
-                        layer.handle_request(req, res, dispatch);
+
+                        this.process_params(layer, req, res, () => {
+                            layer.handle_request(req, res, dispatch);
+                        })
+
                     } else {
                         dispatch();
                     }
@@ -94,5 +99,43 @@ proto.handle = function (req, res, out) {
     }
     dispatch();
 }
+
+proto.param = function (key, handler) { // 发布订阅
+    if (this.paramsCallback[key]) {
+        this.paramsCallback[key].push(handler);
+    } else {
+        this.paramsCallback[key] = [handler];
+    }
+}
+
+proto.process_params = function (layer, req, res, done) {
+    //如果没有动态参数，直接done
+    if (!layer.keys || !layer.keys.length) {
+        return done();
+    }
+    let keys = layer.keys.map(item => item.name);
+    let params = this.paramsCallback;
+    let index = 0;
+    function next() {
+        if (index == keys.length) {
+            return done();
+        }
+        let key = keys[index++];
+        processCallback(key, next);
+    }
+    next();
+    function processCallback(key, out) {
+        let fns = params[key];
+        let idx = 0;
+        let value = req.params[key]
+        function next() {
+            if (fns.length === idx) { return out() }
+            let fn = fns[idx++];
+            fn(req, res, next, value, key);
+        }
+        next();
+    }
+}
+
 
 module.exports = Router;

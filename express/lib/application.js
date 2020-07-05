@@ -22,6 +22,11 @@ Application.prototype.use = function (path, handler) {
     this._router.use(path, handler);
 }
 
+Application.prototype.param = function (key, handler){
+    this.lazyrouter();
+    this._router.param(key, handler);
+}
+
 /**
  * 监听请求到来，处理路由响应
  */
