@@ -125,7 +125,7 @@ proto.process_params = function (layer, req, res, done) {
     }
     next();
     function processCallback(key, out) {
-        let fns = params[key];
+        let fns = params[key] || [];
         let idx = 0;
         let value = req.params[key]
         function next() {

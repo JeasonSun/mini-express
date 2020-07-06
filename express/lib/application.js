@@ -1,12 +1,16 @@
 const http = require('http');
 const Router = require('./router');
 const methods = require('methods');
+const middleware = require('./middleware/init');
+const query = require('./middleware/query');
 
 function Application() { }
 
 Application.prototype.lazyrouter = function () {
     if (!this._router) {
         this._router = new Router();
+        this._router.use(query());
+        this._router.use(middleware.init(this));
     }
 }
 
@@ -22,7 +26,7 @@ Application.prototype.use = function (path, handler) {
     this._router.use(path, handler);
 }
 
-Application.prototype.param = function (key, handler){
+Application.prototype.param = function (key, handler) {
     this.lazyrouter();
     this._router.param(key, handler);
 }

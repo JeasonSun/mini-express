@@ -1095,6 +1095,102 @@ proto.process_params = function (layer, req, res, done) {
 
 至此，`app.param`的功能就已经完成了，路由系统的主要功能逻辑也完成，具体代码见具体结构代码可见分支：[step4-3](https://github.com/JeasonSun/mini-express/tree/step4-3)
 
+### 5.版本 0.0.5-内置中间件
+
+前面小节已经将 Express 的整体逻辑已经完成了，本次迭代主要目标是实现 Express 的一些内置中间件。主要包括以下功能：
+
+- 封装 request 和 response 两个对象
+
+#### 5.1 封装 request 和 response
+
+为了方便框架使用，Express 在 request 和 response 对象上封装了很多常用的方法。例如在 Express 中最常用的`res.send()`，原生的`res.end()`的参数只能是`String`或者`Buffer`，不能是对象，我们可以封装一下，通过参数类型的不同，返回不同的响应数据。为了达到此功能，可以在最开始的部分添加一个中间件，扩展`res`，添加一个`res.send`方法。
+
+```
+app.use(function (req, res, next) {
+    res.send = function (value) {
+        if (Buffer.isBuffer(value) || typeof value === 'string') {
+            res.end(value);
+        } else if (typeof value === 'object') {
+            res.end(JSON.stringify(value));
+        }
+    }
+    next();
+});
+
+app.get('/', function (req, res, next) {
+    res.send({
+        name: 'mojie',
+        age: 18
+    })
+});
+```
+
+但显然不能把内置的中间件写在业务逻辑中，我们在`mini-express`中提取这部分的代码。由于内置中间件的优先级是最高的，可以在创建`Router`后就加载中间件。`lib/application.js`
+
+```diff
+const middleware = require('./middleware/init');
+
+Application.prototype.lazyrouter = function () {
+    if (!this._router) {
+        this._router = new Router();
++        this._router.use(middleware.init(this));
+    }
+}
+```
+
+然后就是`lib/middleware/init.js`。从上述代码可以推断出`middleware.init()`是一个中间件函数，接下来我们就编写这个中间件。主要的功能是把自定义的`request`和`response`对象扩展到原生的`req`、`res`的原型或者原型链上。
+
+```
+const request = require('../request');
+const response = require('../response');
+exports.init = function (app) {
+    return function expressInit(req, res, next) {
+        //request文件可能用到res对象
+        req.res = res;
+
+        //response文件可能用到req对象
+        res.req = req;
+
+        Object.setPrototypeOf(req, request);
+        Object.setPrototypeOf(res, response);
+
+        next();
+    }
+}
+```
+
+这里有一个套路，为什么`init`是一个闭包方法，执行后才返回中间件函数？因为这样就可以传递参数了。其他的一些内容中间件或者第三方中间件大多都是如此。
+
+接下来就是`request.js`和`response.js`，导出的是一个对象，这个对象直接扩展原生 http 上的`http.IncomingMessage.prototype`和`http.ServerResponse.prototype`。
+
+```
+// request.js
+const http = require('http');
+const req = Object.create(http.IncomingMessage.prototype);
+module.exports = req;
+
+// response.js
+const http = require('http');
+const res = Object.create(http.ServerResponse.prototype);
+module.exports = res;
+```
+
+现在框架已经搭建好了，可以自由的扩展`req`和`res`了。在 Express 框架中，`request`和`response`对象有很多非常好用的函数，不过大部分和框架结构无关，并且主要是专注细节的处理，在本文中就不再一一介绍了，直接在`request.js`和`response.js`中粗略实现几个，大家有兴趣可以直接查看文件或者 Express 源代码中的相关文件。
+
+列举一下扩展的情况：
+
+- req.query
+- res.send
+
+#### 5.2 常用中间件
+
+- static[TODO]
+- views[TODO]
+- body-parser
+- muliter
+- cookie-parser
+- express-session
+
 
 
 
