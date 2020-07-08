@@ -6,4 +6,6 @@ function createApplication() {
 }
 createApplication.Router = Router;
 
-module.exports = createApplication;
+exports = module.exports = createApplication;
+
+exports.static = require('./middleware/server-static');
