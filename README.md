@@ -1095,6 +1095,7 @@ proto.process_params = function (layer, req, res, done) {
 
 至此，`app.param`的功能就已经完成了，路由系统的主要功能逻辑也完成，具体代码见具体结构代码可见分支：[step4-3](https://github.com/JeasonSun/mini-express/tree/step4-3)
 
+
 ### 5.版本 0.0.5-内置中间件
 
 前面小节已经将 Express 的整体逻辑已经完成了，本次迭代主要目标是实现 Express 的一些内置中间件。主要包括以下功能：
@@ -1133,7 +1134,8 @@ const middleware = require('./middleware/init');
 Application.prototype.lazyrouter = function () {
     if (!this._router) {
         this._router = new Router();
-+        this._router.use(middleware.init(this));
++       this._router.use(query());   // 扩展req的属性
++       this._router.use(middleware.init(this));  // 扩展req,res的方法
     }
 }
 ```
@@ -1180,19 +1182,241 @@ module.exports = res;
 列举一下扩展的情况：
 
 - req.query
-- res.send
+- req.path
+- res.send()
+- res.sendFile()
+
+```
+// lib/middleware/query.js
+const url = require('url');
+module.exports = function query() {
+    return function (req, res, next) {
+        const { query, path: reqPath } = url.parse(req.url, true);
+        if (!req.query) {
+            req.query = query;
+        }
+        if (!req.path) {
+            req.path = reqPath;
+        }
+        next();
+    }
+}
+```
+
+```
+// response.js
+res.send = function (value) {
+    if (Buffer.isBuffer(value) || typeof value === 'string') {
+        this.end(value);
+    } else if (typeof value === 'object') {
+        this.end(JSON.stringify(value));
+    }
+}
+
+res.sendFile = function (filename, { root }) {
+    if (!filename) {
+        throw new TypeError('filename argument is required to res.sendFile');
+    }
+    if (!root) {
+        throw new TypeError('path must be absolute or specify root to res.sendFile');
+    }
+
+    const file = path.resolve(root, filename);
+    if (!fs.existsSync(file)) {
+        return this.send(`File is not exists : ${file}`);
+    }
+    const statObj = fs.statSync(file);
+    if (statObj.isFile()) {
+        this.setHeader('Content-Type', mime.lookup(file)+';charset=urf8');
+        fs.createReadStream(file).pipe(this);
+
+    } else {
+        return this.send(`File is not exists : ${file}`);
+    }
+}
+```
 
 #### 5.2 常用中间件
 
-- static[TODO]
-- views[TODO]
-- body-parser
-- muliter
-- cookie-parser
-- express-session
+本小节的主要目标是熟悉 Express 常用的中间件，首先我们来比较一下 Express、Koa，看一下两个框架的中间件内置情况。
 
+| Express         | Koa            | 解释               |
+| --------------- | -------------- | ------------------ |
+| express(内置)   | koa-router     | 路由系统           |
+| body-parser     | koa-bodyparser | body 解析中间件    |
+| multer          | koa2-multer    | 文件上传中间件     |
+| express(内置)   | koa-views      | 视图渲染模板中间件 |
+| cookie-parser   | cookie(内置)   | cookie 处理中间件  |
+| express-session | koa-session    | session 处理中间件 |
 
+Koa 和 Express 同出一门，都把很多逻辑都抽象成中间件处理，方便用户定制安装。本节以 express 的视图渲染中间件，简单介绍中间件的写法，为大家扩展中间件提供思路。
 
+首先，依旧还是看一下 Express 是怎么设置模板引擎的。
 
+```
+// 设置查找路径，如果不设置，默认为根目录下的views文件夹
+app.set('views', path.join(__dirname, 'view'));
+// 设置默认后缀
+app.set('view engine', 'html');
+// 如果是html后缀，需要按照ejs来渲染；
+app.engine('html', ejs.__express);
 
+app.get('/', function (req, res, next) {
+    res.render('hello', { name: 'mojie' });
+});
+```
 
+从实例出发，先看渲染引擎函数的实现，上面的 demo 使用了`ejs`渲染引擎，通过查看`ejs`官网，简单的`ejs`使用方法如下：
+
+```
+let ejs = require('ejs'),
+    people = ['geddy', 'neil', 'alex'],
+    html = ejs.render('<%= people.join(", "); %>', {people: people});
+```
+
+也就是说，`res.render`其实是在调用设置好的模板引擎的`render`方法而已。在此之前，我们需要完善一下设置方法`app.set`其实就是在 app 上维护一个`settings`变量的一个过程，这里值得一提的是，我们可以通过参数的个数来控制`set`方法的功能，当只有一个参数时，实际是`get`的功能。
+
+```
+function Application() {
+    this.settings = {};
+}
+Application.prototype.set = function (key, value) {
+    if (arguments.length === 2) {
+        this.settings[key] = value;
+    } else {
+        return this.settings[key];
+    }
+}
+```
+
+接着实现 app.get 函数。因为现在已经有了一个 app.get 方法用来设置路由，所以需要在该方法上进行重载。
+
+```
+methods.forEach(method => {
+    Application.prototype[method] = function (path, handlers) {
+        if(method ==='get' && arguments.length === 1){
+            return this.set(path);
+        }
+        this.lazyrouter();
+        this._router[method](path, handlers);
+    }
+});
+```
+
+完成了`app.set`后，其实就在`app`维护了这样一个对象。
+
+```
+this.settings = {
+    'views': 'views', // 模板目录
+    'view engine': 'html'
+}
+```
+
+而`app.engine`则是维护了一个`engines`对象。这部分逻辑非常简单，直接上代码。
+
+```diff
+function Application() {
+    this.settings = {};
++   this.engines = {};
+}
+Application.prototype.engine = function (ext, fn) {
+    var extension = ext[0] !== '.'
+        ? '.' + ext
+        : ext;
+    this.engines[extension] = fn;
+    return this;
+};
+```
+
+到此，预备工作已经完成了，接下来重点看一下`res.render`的实现原理。
+
+```
+res.render = function (view, options, callback) {
+    let done = callback;
+    let opt = options || {};
+    let req = this.req;
+    let self = this;
+    let app = this.req.app;
+    // 允许只有两个参数(view,callback)
+    if (typeof options === 'function') {
+        done = options;
+        opt = {}
+    }
+    done = done || function (err, str) {
+        if (err) return req.next(err);
+        self.send(str);
+    }
+
+    // 渲染
+    app.render(view, opts, done);
+}
+```
+
+渲染函数一共有三个参数，view 表示模板的名称，options 是模板渲染的变量，callback 是渲染成功后的回调函数。
+
+函数内部直接调用 render 函数进行渲染，渲染完成后调用 done 回调。
+
+接下来创建一个 view.js 文件，主要功能是负责各种模板引擎和框架间的隔离，保持对内接口的统一性。View 类内部定义了很多属性，主要包括引擎、根目录、扩展名、文件名等等，为了以后的渲染做准备。在调用实例的 render 方法时，就是一开始注册的引擎渲染函数渲染模板即可。其中渲染模板可以通过“渲染根目录+文件+后缀”获取。
+
+```
+const path = require('path');
+
+function View(name, options) {
+    let opts = options || {};
+    this.defaultEngine = opts.defaultEngine;
+    this.root = opts.root;
+    this.ext = path.extname(name);
+    this.name = name;
+
+    let fileName = name;
+    // 如果那么中没有后缀，文件名中添加默认的后缀名，原则是：'.'+引擎名；
+    if (!this.ext) {
+        this.ext = this.defaultEngine[0] !== '.'
+            ? '.' + this.defaultEngine
+            : this.defaultEngine;
+
+        fileName += this.ext;
+    }
+    this.engine = opts.engines[this.ext];
+    this.path = this.lookup(fileName);
+}
+
+View.prototype.render = function render(options, callback) {
+    this.engine(this.path, options, callback);
+};
+
+View.prototype.lookup = function (fileName) {
+    return path.resolve(this.root, fileName);
+}
+
+module.exports = View;
+```
+
+最后我们实现以下`app.render`，在其中实例化一个`view`并且调用`view`的`render`方法。
+
+```
+Application.prototype.render = function (name, options, callback) {
+    let done = callback;
+    let engines = this.engines;
+    // let opts = options;
+
+    let view = new View(name, {
+        defaultEngine: this.get('view engine'),
+        root: this.get('views'),
+        engines: engines
+    });
+
+    if (!view.path) {
+        let err = new Error(`Failed to lookup view "${name}"`)
+        return done(err);
+    }
+    try {
+        view.render(options, callback);
+    } catch (e) {
+        return done(e);
+    }
+
+}
+```
+
+到此，一切搞定，我们用 demo 测试一下。 具体代码见具体结构代码可见分支：[step5](https://github.com/JeasonSun/mini-express/tree/step5)
