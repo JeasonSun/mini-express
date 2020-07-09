@@ -53,5 +53,5 @@ res.render = function (view, options, callback) {
     }
 
     // 渲染
-    app.render(view, opts, done);
+    app.render(view, opt, done);
 }

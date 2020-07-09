@@ -1420,3 +1420,13 @@ Application.prototype.render = function (name, options, callback) {
 ```
 
 到此，一切搞定，我们用 demo 测试一下。 具体代码见具体结构代码可见分支：[step5](https://github.com/JeasonSun/mini-express/tree/step5)
+
+### 总结
+
+至此，本篇文章总算完了，其实计划还要写一下`body-parser`、`multer`等中间件的，不过篇幅太长，就不一一介绍了，后续会在代码中补充。本篇文章的主要目标已经实现，基本捋清了 Express 的基本结果，对路由和中间件的有了一个深刻的了解，明确了 Express 处理请求的逻辑流程，相信对后续阅读源码有很大的启发作用。
+
+### 参考文档
+
+1. [珠峰培训](http://www.zhufengpeixun.cn/public/courseExpress.html)
+2. [express 源码阅读](https://juejin.im/post/59c0ef425188257e934966ad#heading-8)
+3. [Express：模板引擎深入研究](https://www.cnblogs.com/chyingp/p/express-render-engine.html)
